@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Login - Chat App</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* --- THEME VARIABLES --- */
+        :root {
+            --bg-color: #d8dbe0;
+            --surface-color: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #65676b;
+            --input-bg: #f0f2f5;
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --glass-bg: rgba(255, 255, 255, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.4);
+            --card-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --surface-color: #1e1e1e;
+            --text-primary: #e4e6eb;
+            --text-secondary: #b0b3b8;
+            --input-bg: #2a2a2a;
+            --glass-bg: rgba(30, 30, 30, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --card-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            transition: background-color 0.3s ease;
+        }
+
+        /* --- BACKGROUND SHAPES --- */
+        .bg-shape {
+            position: absolute;
+            filter: blur(80px);
+            z-index: -1;
+            opacity: 0.6;
+            animation: float 10s infinite ease-in-out;
+        }
+        .shape-1 { top: -10%; left: -10%; width: 50vw; height: 50vw; background: #667eea; border-radius: 50%; }
+        .shape-2 { bottom: -10%; right: -10%; width: 40vw; height: 40vw; background: #764ba2; border-radius: 50%; animation-delay: -5s; }
+        
+        @keyframes float {
+            0% { transform: translate(0, 0); }
+            50% { transform: translate(30px, 50px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        /* --- CARD --- */
+        .login-wrapper { width: 100%; padding: 20px; display: flex; justify-content: center; z-index: 1; }
+        
+        .login-card {
+            width: 100%; max-width: 400px; padding: 40px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            box-shadow: var(--card-shadow);
+        }
+
+        h3 { font-weight: 700; margin-bottom: 30px; letter-spacing: -0.5px; }
+
+        /* --- FORM FIXES --- */
+        
+        .form-control {
+            background-color: var(--input-bg) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid transparent;
+            border-radius: 12px;
+            font-size: 16px;
+        }
+
+        /* Fix 1: Remove White Background on floating label */
+        .form-floating > .form-control:focus ~ label::after,
+        .form-floating > .form-control:not(:placeholder-shown) ~ label::after {
+            background-color: transparent !important; 
+        }
+
+        /* Fix 2: Default Label Color */
+        .form-floating > label {
+            color: var(--text-secondary);
+        }
+
+        /* Fix 3: DARK MODE SPECIFIC - Force label text to be White when floating */
+        [data-theme="dark"] .form-floating > .form-control:focus ~ label,
+        [data-theme="dark"] .form-floating > .form-control:not(:placeholder-shown) ~ label {
+            color: rgba(255, 255, 255, 0.9) !important; /* Bright white text */
+            opacity: 1;
+        }
+
+        /* Fix 4: Chrome Autofill Background Color Hack */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover, 
+        input:-webkit-autofill:focus, 
+        input:-webkit-autofill:active {
+            -webkit-box-shadow: 0 0 0 30px var(--input-bg) inset !important;
+            -webkit-text-fill-color: var(--text-primary) !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
+
+        .form-floating > .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15);
+        }
+
+        .btn-primary-gradient {
+            background: var(--primary-gradient);
+            border: none; color: white; font-weight: 600; padding: 14px;
+            border-radius: 12px; font-size: 1rem; transition: transform 0.2s;
+        }
+        .btn-primary-gradient:active { transform: scale(0.98); }
+
+        /* Bottom Text Colors */
+        .bottom-text {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+        .link-text {
+            color: #667eea; text-decoration: none; font-weight: 600;
+        }
+        .link-text:hover { text-decoration: underline; }
+
+        .theme-toggle-btn {
+            position: absolute; top: 20px; right: 20px;
+            width: 45px; height: 45px; border-radius: 50%;
+            background: var(--glass-bg); border: 1px solid var(--glass-border);
+            color: var(--text-primary); display: flex; align-items: center; justify-content: center;
+            cursor: pointer; backdrop-filter: blur(10px); z-index: 10;
+        }
+
+        /* --- 3D PERSPECTIVE & ANIMATIONS --- */
+
+        /* 1. The Stage */
+        .login-wrapper, .register-wrapper {
+            perspective: 1500px; /* Gives the 3D depth */
+            overflow: hidden; /* Prevents scrollbars during rotation */
+        }
+
+        /* 2. The Card Base State */
+        .login-card, .register-card {
+            /* Existing styles... */
+            /* Add these specific transition properties: */
+            transform-style: preserve-3d;
+            backface-visibility: hidden;
+            will-change: transform, opacity;
+
+            /* Default State (Visible) */
+            opacity: 1;
+            transform: rotateY(0deg) scale(1);
+
+            /* The Transition Speed */
+            transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s;
+        }
+
+        /* 3. Entrance Animation (Page Load) */
+        /* We start slightly rotated and zoom in */
+        @keyframes cardEnter {
+            from {
+                opacity: 0;
+                transform: rotateY(90deg) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: rotateY(0deg) scale(1);
+            }
+        }
+
+        /* Apply animation on load */
+        .login-card, .register-card {
+            animation: cardEnter 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        /* 4. Exit Class (Applied by JS) */
+        .card-exit-active {
+            opacity: 0 !important;
+            transform: rotateY(-90deg) scale(0.9) !important;
+        }
+
+        /* --- PERSIST BACKGROUND (Crucial for Smoothness) --- */
+        /* This prevents the background blobs from restarting their position every time */
+        .bg-shape {
+            /* Remove the 'animation' property here, we will add it via JS */
+            transition: none; 
+        }
+
+        @media (max-width: 576px) {
+            .login-card { padding: 30px 20px; }
+            .bg-shape { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bg-shape shape-1"></div>
+    <div class="bg-shape shape-2"></div>
+
+    <button class="theme-toggle-btn" onclick="toggleTheme()" title="Switch Theme">
+        <i class="fas fa-moon" id="themeIcon"></i>
+    </button>
+
+    <div class="login-wrapper">
+        <div class="login-card">
+            <div class="text-center">
+                <h3 class="mb-4">Welcome Back</h3>
+            </div>
+
+            {% if error %}
+            <div class="alert alert-danger border-0 shadow-sm rounded-3 mb-4" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i> {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="/login" method="post">
+                <div class="form-floating mb-3">
+                    <input type="text" name="username" class="form-control" id="usernameInput" placeholder="Username" required>
+                    <label for="usernameInput">Username</label>
+                </div>
+
+                <button type="submit" class="btn btn-primary-gradient w-100 mb-4">
+                    Sign In
+                </button>
+            </form>
+
+            <div class="text-center">
+                <span class="bottom-text">Don't have an account?</span>
+                <a href="/register" class="link-text ms-1" onclick="transitionToPage(event)">Create Account</a>            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const body = document.body;
+            const icon = document.getElementById('themeIcon');
+            if (body.getAttribute('data-theme') === 'dark') {
+                body.removeAttribute('data-theme');
+                icon.className = 'fas fa-moon';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                icon.className = 'fas fa-sun';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+        (function() {
+            if (localStorage.getItem('theme') === 'dark') {
+                document.body.setAttribute('data-theme', 'dark');
+                document.addEventListener('DOMContentLoaded', () => { document.getElementById('themeIcon').className = 'fas fa-sun'; });
+            }
+        })();
+
+        // --- 1. THEME LOGIC ---
+    function toggleTheme() {
+        const body = document.body;
+        const icon = document.getElementById('themeIcon');
+        if (body.getAttribute('data-theme') === 'dark') {
+            body.removeAttribute('data-theme');
+            icon.className = 'fas fa-moon';
+            localStorage.setItem('theme', 'light');
+        } else {
+            body.setAttribute('data-theme', 'dark');
+            icon.className = 'fas fa-sun';
+            localStorage.setItem('theme', 'dark');
+        }
+    }
+
+    // Apply Theme
+    (function() {
+        if (localStorage.getItem('theme') === 'dark') {
+            document.body.setAttribute('data-theme', 'dark');
+            document.addEventListener('DOMContentLoaded', () => { 
+                const icon = document.getElementById('themeIcon');
+                if(icon) icon.className = 'fas fa-sun'; 
+            });
+        }
+    })();
+
+    // --- 2. 3D PAGE TRANSITION LOGIC ---
+    function transitionToPage(event) {
+        event.preventDefault();
+        const targetUrl = event.currentTarget.href;
+        const card = document.querySelector('.login-card, .register-card');
+
+        // Trigger the 3D Exit
+        card.classList.add('card-exit-active');
+
+        // Save Background Animation State before leaving
+        saveAnimationState();
+
+        // Wait for CSS transition (600ms) then go
+        setTimeout(() => {
+            window.location.href = targetUrl;
+        }, 500); // Slightly faster than CSS to feel snappy
+    }
+
+    // --- 3. BACKGROUND SYNC LOGIC ---
+    // This makes the background feel continuous across pages
+    function saveAnimationState() {
+        const shapes = document.querySelectorAll('.bg-shape');
+        shapes.forEach((shape, index) => {
+            const computedStyle = window.getComputedStyle(shape);
+            // Get current animation time or generic offset
+            sessionStorage.setItem(`shape-${index}-delay`, '-'+(performance.now() / 1000) + 's');
+        });
+    }
+
+    function restoreAnimationState() {
+        const shapes = document.querySelectorAll('.bg-shape');
+        shapes.forEach((shape, index) => {
+            // Re-apply the animation with the correct negative delay (offset)
+            // So it starts exactly where it left off
+            const savedDelay = sessionStorage.getItem(`shape-${index}-delay`) || '0s';
+            // We set the animation manually here to ensure control
+            shape.style.animation = `float 10s infinite ease-in-out`;
+            shape.style.animationDelay = savedDelay;
+        });
+    }
+
+    // Run restore on load
+    document.addEventListener('DOMContentLoaded', restoreAnimationState);
+    </script>
+</body>
+</html>

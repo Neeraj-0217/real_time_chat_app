@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chat Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* --- THEME VARIABLES (Matched to Login/Register) --- */
+        :root {
+            /* Light Theme */
+            --bg-color: #d8dbe0;
+            --sidebar-bg: rgba(255, 255, 255, 0.85); /* Glassy Sidebar */
+            --chat-bg: #ffffff;
+            --border-color: rgba(0, 0, 0, 0.1);
+            
+            --text-primary: #1a1a1a;
+            --text-secondary: #65676b;
+            
+            --input-bg: #f0f2f5;
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --sent-text: #ffffff;
+            --received-bg: #f0f2f5;
+            
+            --active-contact: rgba(102, 126, 234, 0.1); /* Light purple tint */
+            --glass-header: rgba(255, 255, 255, 0.8);
+            
+            --sidebar-width: 350px;
+        }
+
+        /* Dark Theme */
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --sidebar-bg: rgba(30, 30, 30, 0.85); /* Dark Glass */
+            --chat-bg: #121212;
+            --border-color: rgba(255, 255, 255, 0.1);
+            
+            --text-primary: #e4e6eb;
+            --text-secondary: #b0b3b8;
+            
+            --input-bg: #2a2a2a;
+            --received-bg: #2a2a2a;
+            
+            --active-contact: rgba(118, 75, 162, 0.2);
+            --glass-header: rgba(18, 18, 18, 0.8);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        body { 
+            font-family: 'Inter', sans-serif; 
+            margin: 0; 
+            display: flex; 
+            height: 100vh; 
+            background-color: var(--bg-color); 
+            color: var(--text-primary);
+            overflow: hidden;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* --- BACKGROUND BLOBS (Copied from Login) --- */
+        .bg-shape {
+            position: absolute;
+            filter: blur(80px);
+            z-index: 0;
+            opacity: 0.5;
+            pointer-events: none;
+            /* Animation is handled by JS restoration */
+        }
+        .shape-1 { top: -10%; left: -10%; width: 500px; height: 500px; background: #667eea; border-radius: 50%; }
+        .shape-2 { bottom: -10%; right: -10%; width: 400px; height: 400px; background: #764ba2; border-radius: 50%; }
+
+        /* --- LAYOUT WRAPPER --- */
+        .app-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            z-index: 1; /* Sit above blobs */
+            background: transparent;
+            /* Entrance Animation */
+            animation: dashboardEnter 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        @keyframes dashboardEnter {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        /* --- SIDEBAR --- */
+        .sidebar { 
+            width: var(--sidebar-width); 
+            background: var(--sidebar-bg); 
+            backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+            border-right: 1px solid var(--border-color); 
+            display: flex; flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            display: flex; align-items: center; gap: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        /* Modern Search Input */
+        .search-box-container { flex: 1; position: relative; }
+        .search-box-container input { 
+            width: 100%; padding: 12px 20px; border-radius: 12px; 
+            border: 1px solid transparent;
+            background: var(--input-bg);
+            color: var(--text-primary);
+            outline: none; font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        .search-box-container input:focus {
+            background: var(--chat-bg);
+            box-shadow: 0 0 0 2px #667eea;
+        }
+
+        /* Theme Toggle */
+        .theme-toggle {
+            background: var(--input-bg);
+            border: none; width: 40px; height: 40px; border-radius: 50%;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: var(--text-primary); transition: all 0.2s;
+        }
+        .theme-toggle:hover { background: var(--active-contact); color: #667eea; transform: rotate(15deg); }
+
+        /* Contact List */
+        .contact-list { flex: 1; overflow-y: auto; }
+        .contact-item { 
+            padding: 15px 20px; cursor: pointer; display: flex; align-items: center;
+            border-bottom: 1px solid transparent; margin: 4px 8px; border-radius: 12px;
+            transition: background 0.2s; position: relative;
+        }
+        .contact-item:hover { background: rgba(0,0,0,0.05); }
+        [data-theme="dark"] .contact-item:hover { background: rgba(255,255,255,0.05); }
+        
+        .contact-item.active { background: var(--active-contact); }
+        
+        .avatar { 
+            width: 48px; height: 48px; border-radius: 50%; margin-right: 15px; 
+            object-fit: cover; border: 2px solid var(--sidebar-bg);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .contact-name { font-weight: 600; font-size: 15px; color: var(--text-primary); }
+        .contact-username { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+        
+        .status-indicator { 
+            width: 14px; height: 14px; border-radius: 50%; 
+            border: 2px solid var(--sidebar-bg);
+            position: absolute; left: 55px; bottom: 15px;
+        }
+
+        /* --- CHAT AREA --- */
+        .chat-area { 
+            flex: 1; display: flex; flex-direction: column; 
+            background: var(--chat-bg);
+            position: relative;
+        }
+        
+        /* Glassy Header */
+        .chat-header { 
+            padding: 10px 20px; 
+            background: var(--glass-header); 
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-color); 
+            display: none; align-items: center; z-index: 10;
+            position: absolute; top: 0; width: 100%;
+        }
+
+        .back-btn {
+            display: none; background: none; border: none; font-size: 20px; 
+            color: #667eea; cursor: pointer; padding: 10px; margin-right: 5px;
+        }
+
+        /* Messages */
+        .messages-container { 
+            flex: 1; padding: 80px 20px 20px 20px; /* Top padding for header */
+            overflow-y: auto; display: flex; flex-direction: column; gap: 8px; 
+        }
+
+        .message { 
+            max-width: 70%; padding: 12px 18px; border-radius: 18px; 
+            font-size: 15px; position: relative; display: flex; flex-direction: column;
+            word-wrap: break-word; line-height: 1.5;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0.8) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        /* Gradient Sent Message */
+        .message.sent { 
+            align-self: flex-end; 
+            background: var(--primary-gradient); 
+            color: var(--sent-text); 
+            border-bottom-right-radius: 4px;
+        }
+        
+        /* Clean Received Message */
+        .message.received { 
+            align-self: flex-start; 
+            background: var(--received-bg);
+            color: var(--text-primary); 
+            border-bottom-left-radius: 4px;
+        }
+
+        .msg-meta { font-size: 11px; align-self: flex-end; margin-top: 4px; opacity: 0.7; }
+        .message.sent .msg-meta { color: rgba(255,255,255,0.8); }
+
+        /* --- READ RECEIPT TICKS --- */
+
+        /* Default state (Sent but not read): Light transparent white */
+        .message.sent .fa-check-double,
+        .message.sent .fa-check {
+            color: rgba(255, 255, 255, 0.5); 
+        }
+        
+        /* READ State (The Blue Tick): Bright Cyan to pop on Purple */
+        .tick-read {
+            color: #69f0ae !important; /* Bright Cyan/Greenish Blue */
+            text-shadow: 0 0 8px rgba(0,0,0,0.3); /* Adds a small glow */
+        }
+        
+        /* Ensure the tick read class overrides the default message meta color */
+        .message.sent .msg-meta .tick-read {
+            color: #69f0ae !important; 
+        }
+
+        /* Input Area */
+        .input-area { 
+            padding: 20px; background: var(--chat-bg); 
+            display: none; gap: 12px; align-items: center;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .input-area input[type="text"] { 
+            flex: 1; padding: 14px 20px; border-radius: 25px; 
+            border: 1px solid transparent; background: var(--input-bg);
+            color: var(--text-primary); outline: none; font-size: 15px;
+            transition: all 0.2s;
+        }
+        .input-area input[type="text"]:focus { box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3); }
+
+        .btn-send { 
+            width: 45px; height: 45px; border: none; 
+            background: var(--primary-gradient); color: white; border-radius: 50%; 
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: transform 0.2s;
+        }
+        .btn-send:hover { transform: scale(1.1); }
+        
+        .attach-btn { 
+            background: none; border: none; color: var(--text-secondary); 
+            font-size: 20px; cursor: pointer; transition: color 0.2s;
+        }
+        .attach-btn:hover { color: #667eea; }
+
+        /* Search Results Dropdown */
+        #search-results {
+            position: absolute; top: 75px; left: 20px; right: 20px;
+            background: var(--sidebar-bg); backdrop-filter: blur(15px);
+            border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); 
+            z-index: 20; display: none; max-height: 300px; overflow-y: auto;
+            border: 1px solid var(--border-color);
+        }
+        .search-item { padding: 15px; display: flex; align-items: center; cursor: pointer; color: var(--text-primary); border-bottom: 1px solid var(--border-color); }
+        .search-item:hover { background: rgba(102, 126, 234, 0.1); }
+
+        /* --- MOBILE RESPONSIVENESS --- */
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; height: 100%; position: absolute; z-index: 5; }
+            
+            /* Slide Animation for Chat */
+            .chat-area { 
+                width: 100%; height: 100%; position: absolute; 
+                transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+                z-index: 10;
+            }
+            
+            body.chat-active .sidebar { transform: scale(0.95); opacity: 0; pointer-events: none; }
+            body.chat-active .chat-area { transform: translateX(0); }
+            .back-btn { display: block; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bg-shape shape-1"></div>
+    <div class="bg-shape shape-2"></div>
+
+    <div class="app-container">
+        
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="search-box-container">
+                    <input type="text" id="searchInput" placeholder="Search users..." onkeyup="searchUsers()">
+                    <div id="search-results"></div>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Dark Mode">
+                    <i class="fas fa-moon" id="themeIcon"></i>
+                </button>
+            </div>
+            
+            <div class="contact-list" id="contact-list">
+                {% if contacts %}
+                    {% for contact in contacts %}
+                    <div class="contact-item" 
+                         data-user-id="{{ contact.contact.id }}"
+                         onclick="openChatMobileWrapper({{ contact.contact.id }}, '{{ contact.contact.display_name }}', '{{ contact.contact.profile_pic }}', {{ 'true' if contact.contact.is_online else 'false' }})">
+                        <img src="{{ contact.contact.profile_pic or 'https://via.placeholder.com/48' }}" class="avatar">
+                        <div class="contact-info">
+                            <div class="contact-name">{{ contact.contact.display_name }}</div>
+                            <div class="contact-username">@{{ contact.contact.username }}</div>
+                        </div>
+                        <div class="status-indicator" style="background: {{ '#06d755' if contact.contact.is_online else '#ccc' }};"></div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div style="padding: 40px 20px; text-align: center; color: var(--text-secondary); opacity: 0.7;">
+                        <i class="fas fa-user-friends" style="font-size: 40px; margin-bottom: 15px;"></i>
+                        <div>No contacts yet.<br>Search to start chatting!</div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div class="chat-header" id="chat-header">
+                <button class="back-btn" onclick="closeChat()">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <img id="header-pic" src="" class="avatar" style="width: 40px; height: 40px; border: none;">
+                <div class="header-info">
+                    <div class="header-name" id="header-name"></div>
+                    <div class="user-status" id="header-status"></div>
+                    <div id="typing-indicator" style="font-size: 12px; color: #667eea; display: none; font-weight: 600; margin-top:2px;">typing...</div>
+                </div>
+            </div>
+
+            <div class="messages-container" id="messages">
+                <div class="empty-state" style="text-align: center; margin-top: 30vh; opacity: 0.5;">
+                    <i class="fas fa-paper-plane" style="font-size: 60px; color: var(--text-secondary); margin-bottom: 20px; background: var(--input-bg); padding: 30px; border-radius: 50%;"></i>
+                    <h3 style="color: var(--text-secondary); font-weight: 500;">Select a chat to start messaging</h3>
+                </div>
+            </div>
+
+            <div class="input-area" id="input-area">
+                <div id="uploadProgress" class="progress-container" style="display:none; position: absolute; top: 0; left: 0; width: 100%; height: 3px;">
+                    <div id="uploadProgressBar" style="height: 100%; background-color: #667eea; width: 0%; transition: width 0.2s ease;"></div>
+                </div>
+                
+                <input type="file" id="fileInput" style="display: none;" onchange="handleFileUpload(this)">
+                
+                <button id="attachBtn" class="attach-btn" onclick="document.getElementById('fileInput').click()">
+                    <i class="fas fa-plus-circle"></i>
+                </button>
+                
+                <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off">
+                
+                <button class="btn-send" onclick="sendMessage()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const currentUserId = {{ user.id }};
+
+        // --- 1. SHARED THEME LOGIC (Matches Login/Register) ---
+        function toggleTheme() {
+            const body = document.body;
+            const icon = document.getElementById('themeIcon');
+            
+            if (body.getAttribute('data-theme') === 'dark') {
+                body.removeAttribute('data-theme');
+                icon.className = 'fas fa-moon';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                icon.className = 'fas fa-sun';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        (function() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                document.body.setAttribute('data-theme', 'dark');
+                document.addEventListener('DOMContentLoaded', () => {
+                    const icon = document.getElementById('themeIcon');
+                    if(icon) icon.className = 'fas fa-sun';
+                });
+            }
+        })();
+
+        // --- 2. BACKGROUND ANIMATION SYNC (Matches Login/Register) ---
+        function restoreAnimationState() {
+            const shapes = document.querySelectorAll('.bg-shape');
+            shapes.forEach((shape, index) => {
+                // Retrieve the delay saved from the Login page to continue smoothly
+                const savedDelay = sessionStorage.getItem(`shape-${index}-delay`) || '0s';
+                shape.style.animation = `float 10s infinite ease-in-out`;
+                shape.style.animationDelay = savedDelay;
+            });
+        }
+        document.addEventListener('DOMContentLoaded', restoreAnimationState);
+
+        // --- 3. MOBILE WRAPPERS ---
+        function openChatMobileWrapper(id, name, pic, isOnline) {
+            openChat(id, name, pic, isOnline);
+            document.body.classList.add('chat-active');
+        }
+
+        function closeChat() {
+            document.body.classList.remove('chat-active');
+        }
+    </script>
+    <script src="/static/js/client_chat.js"></script>
+</body>
+</html>
