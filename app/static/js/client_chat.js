@@ -13,11 +13,10 @@ function connectWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const wsUrl = `${protocol}://${window.location.host}/ws/${currentUserId}`;
     
-    console.log("🔌 Connecting to WebSocket...");
     socket = new WebSocket(wsUrl);
     
     socket.onopen = function() {
-        console.log("✅ WebSocket connected");
+        console.log("WebSocket connected");
         isConnected = true;
         reconnectAttempts = 0;
         
@@ -35,7 +34,6 @@ function connectWebSocket() {
 
     socket.onmessage = function(event) {
         const data = JSON.parse(event.data);
-        console.log("📨 Received:", data);
 
         if (data.type === "message") {
             // Display message if it's for current chat or from current user
@@ -58,7 +56,6 @@ function connectWebSocket() {
             updateMessageStatus(data.message_id, data.status);
         }
         else if (data.type === "user_status") {
-            console.log(`👤 User ${data.user_id} is now ${data.status}`);
             
             // Update header if viewing this user's chat
             if (currentReceiverId === data.user_id) {
@@ -94,7 +91,7 @@ function connectWebSocket() {
         }
         else if (data.type === "pong") {
             // Heartbeat response received
-            console.log("💓 Pong received");
+            console.log("Pong received");
         }
     };
 
@@ -104,7 +101,7 @@ function connectWebSocket() {
     };
 
     socket.onclose = function(event) {
-        console.log("🔌 WebSocket closed:", event.code, event.reason);
+        console.log("WebSocket closed:", event.code, event.reason);
         isConnected = false;
         stopPingInterval();
         
@@ -112,13 +109,13 @@ function connectWebSocket() {
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
             reconnectAttempts++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+            console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
             
             reconnectTimeout = setTimeout(() => {
                 connectWebSocket();
             }, delay);
         } else {
-            console.error("💔 Max reconnection attempts reached");
+            console.error("Max reconnection attempts reached");
             alert("Connection lost. Please refresh the page.");
         }
     };
@@ -267,16 +264,6 @@ async function loadChatHistory(friendId) {
         messages.forEach(msg => {
             displayMessage(msg);
 
-            // // Send delivered receipt for undelivered messages I received
-            // if (msg.receiver_id === currentUserId && msg.status === 'sent') {
-            //     sendDeliveredReceipt(msg.id, msg.sender_id);
-            // }
-            
-            // // Send read receipt for delivered messages I received
-            // if (msg.receiver_id === currentUserId && msg.status === 'delivered') {
-            //     sendReadReceipt(msg.id, msg.sender_id);
-            // }
-
             if (msg.receiver_id === currentUserId && msg.status !== 'read') {
                 sendReadReceipt(msg.id, msg.sender_id);
             }
@@ -413,7 +400,6 @@ function displayMessage(data) {
 
     if (data.media_type === "image") {
         // IMAGE PREVIEW
-        // We add a max-width to keep it inside the bubble
         contentHtml = `
             <div style="margin-bottom: 5px;">
                 <img src="${data.media_url}" alt="Image" 
@@ -447,7 +433,6 @@ function displayMessage(data) {
     // Combine with Ticks
     div.innerHTML = `${contentHtml}${ticksHtml}`;
 
-    // div.innerHTML = `<span class="msg-content">${escapeHtml(data.content)}</span>${ticksHtml}`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
 }
