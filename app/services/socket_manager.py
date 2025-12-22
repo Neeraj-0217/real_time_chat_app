@@ -5,7 +5,7 @@ import asyncio
 
 class ConnectionManager:
     def __init__(self):
-        # Store multiple websocket connections per user (for multiple tabs)
+        # Store multiple websocket connections per user 
         self.active_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
@@ -17,7 +17,6 @@ class ConnectionManager:
 
         self.active_connections[user_id].append(websocket)
         connection_count = len(self.active_connections[user_id])
-        print(f"✓ User {user_id} connected (connections: {connection_count}). Active users: {list(self.active_connections.keys())}")
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         """Removes a specific WebSocket connection when it disconnects."""
@@ -30,9 +29,6 @@ class ConnectionManager:
             # Remove user from dict if no more connections
             if connection_count == 0:
                 del self.active_connections[user_id]
-                print(f"✗ User {user_id} fully disconnected. Active users: {list(self.active_connections.keys())}")
-            else:
-                print(f"⚠ User {user_id} tab closed (remaining connections: {connection_count})")
 
     def is_user_online(self, user_id: int, exclude_websocket: Optional[WebSocket] = None) -> bool:
         """
@@ -77,7 +73,6 @@ class ConnectionManager:
             try:
                 await connection.send_json(msg_data)
             except Exception as e:
-                print(f"⚠ Dead connection detected for user {receiver_id}: {e}")
                 dead_connections.append(connection)
         
         # Clean up dead connections
@@ -87,12 +82,11 @@ class ConnectionManager:
                     if dead_conn in self.active_connections.get(receiver_id, []):
                         self.active_connections[receiver_id].remove(dead_conn)
                 except Exception as cleanup_error:
-                    print(f"⚠ Error during cleanup: {cleanup_error}")
+                    print(f"Error during cleanup: {cleanup_error}")
             
             # Remove user entry if no connections remain
             if receiver_id in self.active_connections and not self.active_connections[receiver_id]:
                 del self.active_connections[receiver_id]
-                print(f"✗ User {receiver_id} removed due to all dead connections")
 
     async def broadcast(self, msg_data: dict, exclude_user: int = None):
         """
