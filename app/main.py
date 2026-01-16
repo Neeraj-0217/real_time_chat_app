@@ -2,6 +2,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.routers import auth, chat
 from app.core.config import settings
+from app.db.base import Base
+from app.db.session import engine
+
+# Initially executed for creating the tables in the database
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
