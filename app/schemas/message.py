@@ -2,23 +2,27 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-# 1. Shared Properties (Base)
+
+# Shared fields between different message schemas
 class MessageBase(BaseModel):
     content: Optional[str] = None
     media_url: Optional[str] = None
-    media_type: str = "text" 
+    media_type: str = "text"  # text | image | pdf
 
-# 2. Input: What the frontend sends via WebSocket
+
+# Schema used when sending a message (WebSocket input)
 class MessageCreate(MessageBase):
-    receiver_id: int 
+    receiver_id: int
 
-# 3. Output: What the frontend receives to display
+
+# Schema returned to frontend for displaying messages
 class MessageOut(MessageBase):
     id: int
     sender_id: int
     receiver_id: int
     timestamp: datetime
-    status: str # sent, delivered, read
+    status: str  # sent | delivered | read
 
     class Config:
+        # Allows returning SQLAlchemy objects directly
         from_attributes = True
