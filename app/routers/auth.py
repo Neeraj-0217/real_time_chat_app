@@ -1,18 +1,33 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, UploadFile, File
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Request,
+    Form,
+    UploadFile,
+    File,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+
 from app.db.session import get_db
 from app.db.models import User
 from app.core.config import settings
-from app.core.security import create_access_token
-from app.services.image_service import imagekit
-from imagekitio import ImageKit
+from app.core.security import (
+    create_access_token,
+    get_password_hash,
+    verify_password,
+    get_current_user,
+)
+from app.services.image_service import imagekit, upload_dp_to_imagekit
+
 import uuid
-from datetime import timedelta
 import os
 import shutil
 import tempfile
+from datetime import timedelta
 from starlette.concurrency import run_in_threadpool
 from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 
@@ -21,134 +36,187 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
-# --- REGISTER ---
+# ------------------------
+# Register
+# ------------------------
 
 @router.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
-    # FIXED: Explicitly passing 'request' and 'name'
+    """Render user registration page."""
     return templates.TemplateResponse(
         request=request,
         name="auth/register.html",
-        context={}
+        context={},
     )
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
-        request: Request,
-        username: str = Form(...),
-        display_name: str = Form(...),
-        gender: str = Form(...),
-        profile_pic: UploadFile = File(None),
-        db: Session = Depends(get_db)
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    display_name: str = Form(...),
+    gender: str = Form(...),
+    profile_pic: UploadFile = File(None),
+    db: Session = Depends(get_db),
 ):
-    # 1. Check if username exists
-    existing_user = db.query(User).filter(User.username == username).first()
-    if existing_user:
+    # 1. Validate username
+    if len(username) < 3:
         return templates.TemplateResponse(
             request=request,
             name="auth/register.html",
-            context={"error": "Username already taken."}
+            context={"error": "Username must be at least 3 characters."},
         )
 
-    # 2. Upload Image to ImageKit (if provided)
+    if db.query(User).filter(User.username == username).first():
+        return templates.TemplateResponse(
+            request=request,
+            name="auth/register.html",
+            context={"error": "Username already taken."},
+        )
 
-    pic_url = None
-    temp_file_path = None
+    # 2. Validate password
+    if len(password) < 6:
+        return templates.TemplateResponse(
+            request=request,
+            name="auth/register.html",
+            context={"error": "Password must be at least 6 characters."},
+        )
 
+    if len(password) > 100:
+        return templates.TemplateResponse(
+            request=request,
+            name="auth/register.html",
+            context={"error": "Password too long (max 100 characters)."},
+        )
+
+    # 3. Hash password
+    try:
+        hashed_password = get_password_hash(password)
+    except Exception:
+        return templates.TemplateResponse(
+            request=request,
+            name="auth/register.html",
+            context={"error": "Password processing failed. Please try again."},
+        )
+
+    # 4. Upload profile picture (optional)
+    image_url = None
     if profile_pic and profile_pic.filename:
-        try:
-            suffix = os.path.splitext(profile_pic.filename)[1]
+        if not profile_pic.content_type or not profile_pic.content_type.startswith("image/"):
+            raise HTTPException(400, detail="File must be an image")
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-                shutil.copyfileobj(profile_pic.file, temp_file)
-                temp_file_path = temp_file.name
+        profile_pic.file.seek(0, 2)
+        file_size = profile_pic.file.tell()
+        profile_pic.file.seek(0)
 
-            def sync_upload():
-                with open(temp_file_path, "rb") as f:
-                    return imagekit.upload_file(
-                        file=f,
-                        file_name=f"{username}_{uuid.uuid4()}",
-                        options=UploadFileRequestOptions(
-                            folder="/chat_app_profiles/",
-                            use_unique_file_name=True,
-                            tags=['profile_pic-upload'],
-                            is_private_file=False
-                        )
-                    )
-                
-            upload_response = await run_in_threadpool(sync_upload)
+        if file_size > 5 * 1024 * 1024:
+            raise HTTPException(400, detail="Image too large (max 5MB)")
 
-            if upload_response and hasattr(upload_response, 'url'):
-                pic_url = upload_response.url
-            else:
-                print(f"Upload Warning: Response was {upload_response}")
-        except Exception as e:
-            print(f"Image Upload Failed: {e}")
-        finally:
-            if temp_file_path and os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
+        image_url = await upload_dp_to_imagekit(
+            profile_pic,
+            folder="chat_app_profiles",
+        )
 
-    # 3. Create User
+    # 5. Create user
     new_user = User(
         username=username,
+        password=hashed_password,
         display_name=display_name,
         gender=gender,
-        profile_pic=pic_url
+        profile_pic=image_url,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    return RedirectResponse(url="/login", status_code=303)
+    # 6. Auto-login after registration
+    expires = timedelta(minutes=int(settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    token = create_access_token({"sub": new_user.username}, expires)
+
+    response = RedirectResponse(url="/chat", status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(
+        key="access_token",
+        value=f"Bearer {token}",
+        httponly=True,
+        max_age=int(settings.ACCESS_TOKEN_EXPIRE_MINUTES) * 60,
+        secure=False,
+        samesite="lax",
+    )
+    return response
 
 
-# --- LOGIN ---
+# ------------------------
+# Login
+# ------------------------
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    """Render login page."""
     return templates.TemplateResponse(
         request=request,
         name="auth/login.html",
-        context={}
+        context={},
     )
 
 
 @router.post("/login")
 async def login(
-        request: Request,
-        username: str = Form(...),
-        db: Session = Depends(get_db)
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.username == username).first()
 
-    if not user:
+    if not user or not verify_password(password, user.password):
         return templates.TemplateResponse(
             request=request,
             name="auth/login.html",
-            context={"error": "Invalid username."}
+            context={"error": "Invalid username or password."},
         )
-    
-    # Create Access Token
-    access_token_expires = timedelta(minutes=int(settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
 
-    # Login Success -> Set Cookie
-    response = RedirectResponse(url="/chat", status_code=303)
+    expires = timedelta(minutes=int(settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    token = create_access_token({"sub": user.username}, expires)
+
+    response = RedirectResponse(url="/chat", status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
-        key="access_token", 
-        value=f"Bearer {access_token}",
-        httponly=True 
+        key="access_token",
+        value=f"Bearer {token}",
+        httponly=True,
+        max_age=int(settings.ACCESS_TOKEN_EXPIRE_MINUTES) * 60,
+        secure=False,
+        samesite="lax",
     )
     return response
 
 
-# --- LOGOUT ---
+# ------------------------
+# Auth Verification
+# ------------------------
+
+@router.get("/auth/verify")
+async def verify_user(request: Request, db: Session = Depends(get_db)):
+    """Verify currently authenticated user."""
+    user = await get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "profile_pic": user.profile_pic,
+    }
+
+
+# ------------------------
+# Logout
+# ------------------------
+
 @router.get("/logout")
 async def logout():
-    """Logout user and clear authentication cookie"""
-    response = RedirectResponse(url="/login", status_code=303)
-    response.delete_cookie("user_id")
+    """Clear auth cookie and logout user."""
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie("access_token")
     return response
