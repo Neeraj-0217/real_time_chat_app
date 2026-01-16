@@ -2,30 +2,32 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 
-# Base schema (shared properties)
+
+# Shared user properties
 class UserBase(BaseModel):
     username: str
     display_name: str
     gender: Optional[str] = None
 
-# Schema for creating a user (Register)
-class UserCreate(UserBase):
-    pass
-    # Profile pic is handled as UploadFile, not Pydantic
 
-# Schema for reading user data (returning to frontend)
+# Schema used during user registration
+class UserCreate(UserBase):
+    # Profile picture is handled via UploadFile, not here
+    pass
+
+
+# Schema returned to frontend
 class UserOut(UserBase):
     id: int
-    username: str
-    display_name: str
     profile_pic: Optional[str] = None
-    # created_at: datetime
     is_online: bool
 
     class Config:
+        # Enables ORM-to-schema conversion
         from_attributes = True
 
 
+# Schema used for showing contacts
 class ContactShow(BaseModel):
     id: int
     contact: UserOut
