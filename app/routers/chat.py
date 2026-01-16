@@ -1,3 +1,8 @@
+import json
+import os
+import tempfile
+import uuid
+
 from fastapi import (
     APIRouter,
     WebSocket,
@@ -6,449 +11,493 @@ from fastapi import (
     Request,
     UploadFile,
     File,
-    Form,
     status,
-    HTTPException
+    HTTPException,
 )
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func
-from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 from starlette.concurrency import run_in_threadpool
+from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
+from pydantic import BaseModel
 
+from app.core.security import get_current_user
+from app.db.models import Message, User, Contact, ChatPreference
 from app.db.session import get_db
-from app.db.models import Message, User, Contact
+from app.services.image_service import imagekit, upload_chat_attachment_to_imagekit
 from app.services.socket_manager import manager
-from app.core.security import get_current_user 
-from app.services.image_service import imagekit
-
-import json
-from datetime import datetime
-import os
-import shutil
-import tempfile
-import uuid
-
+from app.services.translation_service import translation_service
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
-# File upload configuration
-ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
-ALLOWED_DOCUMENT_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt'}
-ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | ALLOWED_DOCUMENT_EXTENSIONS
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB in bytes
 
-# HTML Route: Render the Chat Dashboard
+# -----------------------------
+# File Upload Configuration
+# -----------------------------
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+
+# -----------------------------
+# Chat Dashboard (HTML)
+# -----------------------------
 @router.get("/chat", response_class=HTMLResponse)
 async def chat_dashboard(request: Request, db: Session = Depends(get_db)):
+    """
+    Renders the main chat dashboard.
+    Redirects unauthenticated users to login.
+    """
     user = await get_current_user(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=303)
-    
-    # Fetch user's contacts to display in the sidebar
+
     contacts = db.query(Contact).filter(Contact.owner_id == user.id).all()
-    
-    return templates.TemplateResponse("chat/dashboard.html", {
-        "request": request, 
-        "user": user, 
-        "contacts": contacts
-    })
 
-# ------ API ROUTES -----
+    # Token used by frontend to prevent stale socket reuse
+    import secrets
+    page_token = secrets.token_urlsafe(16)
 
+    return templates.TemplateResponse(
+        "chat/dashboard.html",
+        {
+            "request": request,
+            "user": user,
+            "contacts": contacts,
+            "page_token": page_token,
+        },
+    )
+
+
+# -----------------------------
+# User Search
+# -----------------------------
 @router.get("/users/search")
 async def search_users(query: str, request: Request, db: Session = Depends(get_db)):
-    """Search for users by username to start a new chat"""
+    """
+    Search users by username to start new chats.
+    """
     user = await get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401)
-    
-    users = db.query(User).filter(
-        User.username.contains(query),
-        User.id != user.id
-    ).limit(5).all()
 
-    return [{
-        "id": u.id,
-        "username": u.username,
-        "display_name": u.display_name,
-        "profile_pic": u.profile_pic,
-        "is_online": manager.is_user_online(u.id)  # Check real-time status
-    } for u in users]
+    users = (
+        db.query(User)
+        .filter(User.username.contains(query), User.id != user.id)
+        .limit(5)
+        .all()
+    )
 
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "display_name": u.display_name,
+            "profile_pic": u.profile_pic,
+            "is_online": manager.is_user_online(u.id),
+        }
+        for u in users
+    ]
+
+
+# -----------------------------
+# Chat History (with Translation)
+# -----------------------------
 @router.get("/chat/history/{friend_id}")
-async def get_chat_history(
-    friend_id: int, 
-    request: Request, 
-    db: Session = Depends(get_db)
-):
-    """Get previous messages"""
+async def get_chat_history(friend_id: int, request: Request, db: Session = Depends(get_db)):
+    """
+    Fetch full chat history with language translation applied per preference.
+    """
     user = await get_current_user(request, db)
     if not user:
-        return []
+        raise HTTPException(status_code=401)
 
-    # Fetch messages between Me and Friend (ordered by time)
-    messages = db.query(Message).filter(
-        or_(
-            and_(Message.sender_id == user.id, Message.receiver_id == friend_id),
-            and_(Message.sender_id == friend_id, Message.receiver_id == user.id)
+    preference = db.query(ChatPreference).filter(
+        ChatPreference.user_id == user.id,
+        ChatPreference.friend_id == friend_id,
+    ).first()
+
+    preferred_lang = preference.preferred_language if preference else "en"
+
+    messages = (
+        db.query(Message)
+        .filter(
+            or_(
+                and_(Message.sender_id == user.id, Message.receiver_id == friend_id),
+                and_(Message.sender_id == friend_id, Message.receiver_id == user.id),
+            )
         )
-    ).order_by(Message.timestamp.asc()).all()
-    
-    # Return as dict for JSON serialization
-    return [{
-        "id": msg.id,
-        "sender_id": msg.sender_id,
-        "receiver_id": msg.receiver_id,
-        "content": msg.content,
-        "media_url": msg.media_url,
-        "media_type": msg.media_type,
-        "status": msg.status,
-        "timestamp": msg.timestamp.isoformat()
-    } for msg in messages]
+        .order_by(Message.timestamp.asc())
+        .all()
+    )
+
+    response = []
+    for msg in messages:
+        data = {
+            "id": msg.id,
+            "sender_id": msg.sender_id,
+            "receiver_id": msg.receiver_id,
+            "content": msg.content,
+            "original_content": msg.content,
+            "media_url": msg.media_url,
+            "media_type": msg.media_type,
+            "status": msg.status,
+            "timestamp": msg.timestamp.isoformat(),
+            "is_translated": False,
+            "original_language": msg.original_language or "en",
+        }
+
+        if msg.sender_id == friend_id and msg.original_language != preferred_lang:
+            if msg.translated_content:
+                data["content"] = msg.translated_content
+            else:
+                translated, _ = translation_service.translate(
+                    msg.content,
+                    preferred_lang,
+                    msg.original_language,
+                )
+                data["content"] = translated
+            data["is_translated"] = True
+
+        response.append(data)
+
+    return response
 
 
+# -----------------------------
+# User Online Status
+# -----------------------------
 @router.get("/user/status/{user_id}")
 async def get_user_status(user_id: int):
-    """Get real-time online status of a user"""
+    """Return real-time online status."""
     return {
         "user_id": user_id,
-        "is_online": manager.is_user_online(user_id)
+        "is_online": manager.is_user_online(user_id),
     }
 
 
-# WebSocket Route (The Real-Time Link)
+# -----------------------------
+# WebSocket Endpoint
+# -----------------------------
 @router.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: int, db: Session = Depends(get_db)):
-    # Connect the websocket first
+async def websocket_endpoint(
+    websocket: WebSocket,
+    client_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Core real-time WebSocket handler.
+    Handles messaging, receipts, typing, translation and presence.
+    """
     await manager.connect(websocket, client_id)
-    
-    # CRITICAL: Only set user online if this is their FIRST connection
+
     was_offline = not manager.is_user_online(client_id, exclude_websocket=websocket)
-    
+
+    user = db.query(User).filter(User.id == client_id).first()
+    if not user:
+        await websocket.close()
+        return
+
     if was_offline:
-        user = db.query(User).filter(User.id == client_id).first()
-        if user:
-            user.is_online = True
-            db.commit()
+        user.is_online = True
+        db.commit()
+        await notify_contacts_about_status(
+            client_id,
+            {"type": "user_status", "user_id": client_id, "status": "online"},
+            db,
+        )
 
-        # Notify all friends that this user just came online
-        online_payload = {
-            "type": "user_status",
-            "user_id": client_id,
-            "status": "online"
-        }
-        
-        # Get all people who should be notified
-        await notify_contacts_about_status(client_id, online_payload, db)
-
-    pending_messages = db.query(Message).filter(
+    # Deliver pending messages
+    pending = db.query(Message).filter(
         Message.receiver_id == client_id,
-        Message.status == "sent"
+        Message.status == "sent",
     ).all()
 
-    if pending_messages:
-        for msg in pending_messages:
-            msg.status = 'delivered'
-            await manager.send_personal_message({
-                "type": "status_update",
-                "message_id": msg.id,
-                "status": "delivered"
-            }, msg.sender_id)
-
-        db.commit()
+    for msg in pending:
+        msg.status = "delivered"
+        await manager.send_personal_message(
+            {"type": "status_update", "message_id": msg.id, "status": "delivered"},
+            msg.sender_id,
+        )
+    db.commit()
 
     try:
         while True:
-            data = await websocket.receive_text()
-            msg_data = json.loads(data)
+            payload = json.loads(await websocket.receive_text())
 
-            # Type 1: Regular Message
-            if 'receiver_id' in msg_data and msg_data.get('type') != 'typing':
-                receiver_id = int(msg_data['receiver_id'])
-                content = msg_data.get('content', '')
-                media_url = msg_data.get('media_url', None)
-                media_type = msg_data.get('media_type', 'text')
+            # ---- Regular Message ----
+            if "content" in payload and payload.get("type") != "typing":
+                receiver_id = int(payload["receiver_id"])
+                content = payload.get("content", "")
+                media_url = payload.get("media_url")
+                media_type = payload.get("media_type", "text")
 
-                # Ensure contact relationship exists
-                existing_contact = db.query(Contact).filter(
-                    Contact.owner_id == client_id, 
-                    Contact.contact_id == receiver_id
+                detected_lang = translation_service.detect_language(content)
+
+                pref = db.query(ChatPreference).filter(
+                    ChatPreference.user_id == receiver_id,
+                    ChatPreference.friend_id == client_id,
                 ).first()
 
-                if not existing_contact:
-                    new_contact = Contact(owner_id=client_id, contact_id=receiver_id)
-                    db.add(new_contact)
+                receiver_lang = pref.preferred_language if pref else "en"
 
-                    reverse_contact = Contact(owner_id=receiver_id, contact_id=client_id)
-                    db.add(reverse_contact)
+                translated = None
+                is_translated = False
+
+                if detected_lang != receiver_lang:
+                    translated, _ = translation_service.translate(
+                        content, receiver_lang, detected_lang
+                    )
+                    is_translated = True
+
+                # Ensure contacts exist (bidirectional)
+                if not db.query(Contact).filter(
+                    Contact.owner_id == client_id,
+                    Contact.contact_id == receiver_id,
+                ).first():
+                    db.add(Contact(owner_id=client_id, contact_id=receiver_id))
+                    db.add(Contact(owner_id=receiver_id, contact_id=client_id))
                     db.commit()
 
-                # Determine initial status based on receiver's online state
-                is_receiver_online = manager.is_user_online(receiver_id)
-                status = "delivered" if is_receiver_online else "sent"
+                online = manager.is_user_online(receiver_id)
+                status_value = "delivered" if online else "sent"
 
-                # Save message to database
-                new_msg = Message(
+                message = Message(
                     sender_id=client_id,
                     receiver_id=receiver_id,
                     content=content,
+                    original_language=detected_lang,
+                    translated_content=translated,
+                    is_translated=is_translated,
                     media_url=media_url,
                     media_type=media_type,
-                    status=status
+                    status=status_value,
                 )
-                db.add(new_msg)
+
+                db.add(message)
                 db.commit()
-                db.refresh(new_msg)
+                db.refresh(message)
 
-                # Prepare response payload
-                response = {
-                    "type": "message",
-                    "id": new_msg.id,
-                    "content": new_msg.content,
-                    "media_url": new_msg.media_url,
-                    "media_type": new_msg.media_type,
-                    "sender_id": client_id,
-                    "receiver_id": receiver_id,
-                    "timestamp": new_msg.timestamp.isoformat(),
-                    "status": status
-                }
+                if online:
+                    await manager.send_personal_message(
+                        {
+                            "type": "message",
+                            "id": message.id,
+                            "content": translated if is_translated else content,
+                            "original_content": content,
+                            "is_translated": is_translated,
+                            "original_language": detected_lang,
+                            "media_url": media_url,
+                            "media_type": media_type,
+                            "sender_id": client_id,
+                            "receiver_id": receiver_id,
+                            "timestamp": message.timestamp.isoformat(),
+                            "status": status_value,
+                        },
+                        receiver_id,
+                    )
 
-                # Send to receiver (if online)
-                if is_receiver_online:
-                    await manager.send_personal_message(response, receiver_id)
-                
-                # Send confirmation back to sender
-                await manager.send_personal_message(response, client_id)
+                await manager.send_personal_message(
+                    {
+                        "type": "message",
+                        "id": message.id,
+                        "content": content,
+                        "original_content": content,
+                        "is_translated": False,
+                        "original_language": detected_lang,
+                        "media_url": media_url,
+                        "media_type": media_type,
+                        "sender_id": client_id,
+                        "receiver_id": receiver_id,
+                        "timestamp": message.timestamp.isoformat(),
+                        "status": status_value,
+                    },
+                    client_id,
+                )
 
-            # Type 2: Read Receipt
-            elif msg_data.get('type') == 'read_receipt':
-                msg_id = msg_data['message_id']
-                sender_id = msg_data['sender_id']
-
-                # Update message status in database
-                msg_to_update = db.query(Message).filter(Message.id == msg_id).first()
-                if msg_to_update and msg_to_update.status != "read":
-                    msg_to_update.status = "read"
+            # ---- Read Receipt ----
+            elif payload.get("type") == "read_receipt":
+                msg = db.query(Message).filter(Message.id == payload["message_id"]).first()
+                if msg and msg.status != "read":
+                    msg.status = "read"
                     db.commit()
+                    await manager.send_personal_message(
+                        {"type": "status_update", "message_id": msg.id, "status": "read"},
+                        payload["sender_id"],
+                    )
 
-                    # Notify the sender about read status
-                    await manager.send_personal_message({
-                        "type": "status_update",
-                        "message_id": msg_id,
-                        "status": "read"
-                    }, sender_id)
-
-            # Type 3: Delivered Receipt
-            elif msg_data.get('type') == 'delivered_receipt':
-                msg_id = msg_data['message_id']
-                sender_id = msg_data['sender_id']
-
-                # Update message status
-                msg_to_update = db.query(Message).filter(Message.id == msg_id).first()
-                if msg_to_update and msg_to_update.status == "sent":
-                    msg_to_update.status = "delivered"
+            # ---- Delivered Receipt ----
+            elif payload.get("type") == "delivered_receipt":
+                msg = db.query(Message).filter(Message.id == payload["message_id"]).first()
+                if msg and msg.status == "sent":
+                    msg.status = "delivered"
                     db.commit()
+                    await manager.send_personal_message(
+                        {"type": "status_update", "message_id": msg.id, "status": "delivered"},
+                        payload["sender_id"],
+                    )
 
-                    # Notify sender
-                    await manager.send_personal_message({
-                        "type": "status_update",
-                        "message_id": msg_id,
-                        "status": "delivered"
-                    }, sender_id)
-            
-            # Type 4: Ping to check connection
-            elif msg_data.get('type') == 'ping':
+            # ---- Typing Indicator ----
+            elif payload.get("type") == "typing":
+                await manager.send_personal_message(
+                    {"type": "typing", "sender_id": client_id},
+                    int(payload["receiver_id"]),
+                )
+
+            # ---- Ping ----
+            elif payload.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
 
-            elif msg_data.get('type') == 'typing':
-                receiver_id = int(msg_data['receiver_id'])
-
-                await manager.send_personal_message({
-                    'type': 'typing',
-                    'sender_id': client_id,
-                }, receiver_id)
-            
     except WebSocketDisconnect:
-        # Disconnect this specific websocket
-        manager.disconnect(websocket, client_id)
-        
-        # CRITICAL: Only mark user offline if ALL their connections are closed
-        still_online = manager.is_user_online(client_id)
-        
-        if not still_online:
-            user = db.query(User).filter(User.id == client_id).first()
-            if user:
-                user.is_online = False
-                db.commit()
-
-            # Notify all contacts that user is now offline
-            offline_payload = {
-                "type": "user_status", 
-                "user_id": client_id, 
-                "status": "offline"
-            }
-            
-            await notify_contacts_about_status(client_id, offline_payload, db)
-    
-    except Exception as e:
-        print(f"❌ WebSocket Error for user {client_id}: {e}")
         manager.disconnect(websocket, client_id)
 
+        if not manager.is_user_online(client_id):
+            user.is_online = False
+            db.commit()
+            await notify_contacts_about_status(
+                client_id,
+                {"type": "user_status", "user_id": client_id, "status": "offline"},
+                db,
+            )
 
+
+# -----------------------------
+# Notify Contacts of Status
+# -----------------------------
 async def notify_contacts_about_status(user_id: int, payload: dict, db: Session):
     """
-    Notify all contacts (bidirectional) about a user's status change.
-    This ensures both people who added this user AND people this user added get notified.
+    Notify all related contacts (both directions) about status change.
     """
-    # Get contacts where user_id is the owner (people I added)
-    my_contacts = db.query(Contact).filter(Contact.owner_id == user_id).all()
-    
-    # Get contacts where user_id is the contact (people who added me)
-    reverse_contacts = db.query(Contact).filter(Contact.contact_id == user_id).all()
-    
-    # Create a set to avoid duplicate notifications
     notify_users = set()
-    
-    for contact in my_contacts:
-        notify_users.add(contact.contact_id)
-    
-    for contact in reverse_contacts:
-        notify_users.add(contact.owner_id)
-    
-    # Send notification to all relevant users
+
+    for c in db.query(Contact).filter(Contact.owner_id == user_id).all():
+        notify_users.add(c.contact_id)
+
+    for c in db.query(Contact).filter(Contact.contact_id == user_id).all():
+        notify_users.add(c.owner_id)
+
     for friend_id in notify_users:
-        if friend_id != user_id:  # Don't notify self
+        if friend_id != user_id:
             await manager.send_personal_message(payload, friend_id)
 
+
+# -----------------------------
+# Attachment Upload
+# -----------------------------
 @router.post("/chat/upload")
-async def upload_attachment(
-    file: UploadFile = File(...),
-    user = Depends(get_current_user)
-):
-    # Validate extension
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
-        )
-    
-    # Determine media type
-    media_type = "text"
-    target_folder = "/chat_others/"
-
-    if file_ext in ALLOWED_IMAGE_EXTENSIONS:
-        media_type = "image"
-        target_folder = "/chat_images/"
-    elif file_ext in ALLOWED_DOCUMENT_EXTENSIONS:
-        media_type = "document"
-        target_folder = "/chat_documents/"
-
-    # Read file and validate size
-    file_content = await file.read()
-    file_size = len(file_content)
+async def upload_attachment(file: UploadFile = File(...), user=Depends(get_current_user)):
+    content = await file.read()
+    file_size = len(content)
 
     if file_size > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File too large. Maximum size is 5MB."
-        )
-    await file.seek(0)
+        raise HTTPException(status_code=413, detail="File too large")
 
-    temp_file_path = None
-    try:
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
-            temp_file.write(file_content)
-            temp_file_path = temp_file.name
+    await file.seek(0)  # Reset file pointer so service can read it again.
 
-        # Upload to ImageKit
-        def sync_upload():
-            with open(temp_file_path, "rb") as f:
-                return imagekit.upload_file(
-                    file=f,
-                    file_name=f"chat_{user.username}_{uuid.uuid4()}",
-                    options=UploadFileRequestOptions(
-                        folder=target_folder,
-                        is_private_file=False,
-                        use_unique_file_name=True,
-                        tags=['chat-attachment', media_type]
-                    )
-                )
-            
-        upload_response = await run_in_threadpool(sync_upload)
+    result = await upload_chat_attachment_to_imagekit(
+        file=file,
+        uploader_username=user.username,
+    )
+    if not result:
+        raise HTTPException(status_code=500, detail="Upload failed")
 
-        # Handle Response
-        if upload_response and hasattr(upload_response, "url"):
-            return {
-                "url": upload_response.url,
-                "type": media_type,
-                "filename": file.filename,
-                "size": file_size
-            }
-        else:
-            print(f"ImageKit Error: {upload_response}")
-            raise HTTPException(status_code=500, detail="Upload failed")
-    except HTTPException as he:
-        raise he   
-    except Exception as e:
-        print(f"Attachment Upload Error: {e}")
-        raise HTTPException(status_code=500, detail="Server error during upload.")
-    finally:
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except:
-                pass
+    return {
+        "url": result["url"],
+        "type": result["media_type"],
+        "filename": result["filename"],
+        "size": file_size,
+    }
 
-@router.get("/debug/connections")
-async def debug_connections(request: Request, db: Session = Depends(get_db)):
-    """Debug endpoint to see connection statistics"""
+
+# -----------------------------
+# Language Preference
+# -----------------------------
+class LanguagePreferenceRequest(BaseModel):
+    friend_id: int
+    language: str
+
+
+@router.post("/chat/language-preference")
+async def set_chat_language_preference(
+    req: LanguagePreferenceRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     user = await get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401)
-    
-    stats = manager.get_stats()
-    
-    # Get database status for comparison
-    online_users_db = db.query(User).filter(User.is_online == True).all()
-    online_users_db_ids = [u.id for u in online_users_db]
-    
+
+    if req.language not in translation_service.SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Language not supported")
+
+    pref = db.query(ChatPreference).filter(
+        ChatPreference.user_id == user.id,
+        ChatPreference.friend_id == req.friend_id,
+    ).first()
+
+    if pref:
+        pref.preferred_language = req.language
+    else:
+        db.add(ChatPreference(
+            user_id=user.id,
+            friend_id=req.friend_id,
+            preferred_language=req.language,
+        ))
+
+    db.commit()
+    return {"message": "Language updated", "language": req.language}
+
+
+@router.get("/chat/language-preference/{friend_id}")
+async def get_chat_language_preference(friend_id: int, request: Request, db: Session = Depends(get_db)):
+    user = await get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    pref = db.query(ChatPreference).filter(
+        ChatPreference.user_id == user.id,
+        ChatPreference.friend_id == friend_id,
+    ).first()
+
     return {
-        "websocket_stats": stats,
-        "database_online_users": online_users_db_ids,
-        "discrepancy": {
-            "in_db_not_in_ws": [uid for uid in online_users_db_ids if uid not in stats['users']],
-            "in_ws_not_in_db": [uid for uid in stats['users'] if uid not in online_users_db_ids]
-        }
+        "friend_id": friend_id,
+        "preferred_language": pref.preferred_language if pref else "en",
+        "available_languages": translation_service.SUPPORTED_LANGUAGES,
+    }
+
+
+# -----------------------------
+# Debug Utilities
+# -----------------------------
+@router.get("/debug/connections")
+async def debug_connections(request: Request, db: Session = Depends(get_db)):
+    user = await get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    stats = manager.get_stats()
+    db_online = [u.id for u in db.query(User).filter(User.is_online == True).all()]
+
+    return {
+        "websocket": stats,
+        "database": db_online,
     }
 
 
 @router.post("/debug/fix-online-status")
 async def fix_online_status(request: Request, db: Session = Depends(get_db)):
-    """Manually sync database online status with actual connections"""
     user = await get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401)
-    
-    online_user_ids = manager.get_online_users()
-    
-    # Set all users to offline first
+
+    online_ids = manager.get_online_users()
     db.query(User).update({User.is_online: False})
-    
-    # Set only connected users to online
-    if online_user_ids:
-        db.query(User).filter(User.id.in_(online_user_ids)).update(
-            {User.is_online: True}, 
-            synchronize_session=False
+
+    if online_ids:
+        db.query(User).filter(User.id.in_(online_ids)).update(
+            {User.is_online: True},
+            synchronize_session=False,
         )
-    
+
     db.commit()
-    
-    return {
-        "message": "Online status synchronized",
-        "online_users": online_user_ids
-    }
+    return {"message": "Online status synced", "online_users": online_ids}
