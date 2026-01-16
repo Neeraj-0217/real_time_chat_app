@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, chat
+
 from app.core.config import settings
+from app.routers import auth, chat, users
 from app.db.base import Base
 from app.db.session import engine
 
-# Initially executed for creating the tables in the database
-Base.metadata.create_all(bind=engine)
+# Base.metadata.drop_all(bind=engine)
+# Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -20,6 +21,7 @@ app.mount(
 # Include Routers
 app.include_router(auth.router)
 app.include_router(chat.router)
+app.include_router(users.router)
 
 @app.get("/")
 async def root():
