@@ -63,7 +63,7 @@
 
         /* --- CARD STYLING --- */
         .register-wrapper { width: 100%; padding: 20px; display: flex; justify-content: center; z-index: 1; }
-        
+
         .register-card {
             width: 100%; max-width: 450px; padding: 40px;
             background: var(--glass-bg);
@@ -76,7 +76,7 @@
         h3 { font-weight: 700; margin-bottom: 30px; letter-spacing: -0.5px; }
 
         /* --- INPUTS & SELECTS FIXES --- */
-        
+
         /* General Input Styling */
         .form-control, .form-select {
             background-color: var(--input-bg) !important;
@@ -95,7 +95,7 @@
         .form-floating > .form-control:focus ~ label::after,
         .form-floating > .form-control:not(:placeholder-shown) ~ label::after,
         .form-floating > .form-select ~ label::after {
-            background-color: transparent !important; 
+            background-color: transparent !important;
         }
 
         .form-floating > label { color: var(--text-secondary); }
@@ -112,7 +112,7 @@
         .form-control[type="file"] {
             padding: 8px; /* Reduce padding slightly for file input */
         }
-        
+
         /* Style the 'Choose File' button inside the input */
         ::file-selector-button {
             background: var(--surface-color) !important;
@@ -176,7 +176,7 @@
             perspective: 1500px; /* Gives the 3D depth */
             overflow: hidden; /* Prevents scrollbars during rotation */
         }
-        
+
         /* 2. The Card Base State */
         .login-card, .register-card {
             /* Existing styles... */
@@ -184,15 +184,15 @@
             transform-style: preserve-3d;
             backface-visibility: hidden;
             will-change: transform, opacity;
-            
+
             /* Default State (Visible) */
             opacity: 1;
             transform: rotateY(0deg) scale(1);
-            
+
             /* The Transition Speed */
             transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s;
         }
-        
+
         /* 3. Entrance Animation (Page Load) */
         /* We start slightly rotated and zoom in */
         @keyframes cardEnter {
@@ -205,23 +205,23 @@
                 transform: rotateY(0deg) scale(1);
             }
         }
-        
+
         /* Apply animation on load */
         .login-card, .register-card {
             animation: cardEnter 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
-        
+
         /* 4. Exit Class (Applied by JS) */
         .card-exit-active {
             opacity: 0 !important;
             transform: rotateY(-90deg) scale(0.9) !important;
         }
-        
+
         /* --- PERSIST BACKGROUND (Crucial for Smoothness) --- */
         /* This prevents the background blobs from restarting their position every time */
         .bg-shape {
             /* Remove the 'animation' property here, we will add it via JS */
-            transition: none; 
+            transition: none;
         }
 
         @media (max-width: 576px) {
@@ -252,10 +252,15 @@
             {% endif %}
 
             <form action="/register" method="post" enctype="multipart/form-data">
-                
+
                 <div class="form-floating mb-3">
                     <input type="text" name="username" class="form-control" id="usernameInput" placeholder="Username" required>
                     <label for="usernameInput">Username (Unique ID)</label>
+                </div>
+
+                <div class="form-floating mb-3">
+                    <input type="password" name="password" class="form-control" id="passwordInput" placeholder="Password" required>
+                    <label for="passwordInput">Password</label>
                 </div>
 
                 <div class="form-floating mb-3">
@@ -284,7 +289,7 @@
 
             <div class="text-center">
                 <span class="bottom-text">Already have an account?</span>
-                <a href="/login" class="link-text ms-1" onclick="transitionToPage(event)">Login</a>            
+                <a href="/login" class="link-text ms-1" onclick="transitionToPage(event)">Login</a>
             </div>
         </div>
     </div>
@@ -329,9 +334,9 @@
     (function() {
         if (localStorage.getItem('theme') === 'dark') {
             document.body.setAttribute('data-theme', 'dark');
-            document.addEventListener('DOMContentLoaded', () => { 
+            document.addEventListener('DOMContentLoaded', () => {
                 const icon = document.getElementById('themeIcon');
-                if(icon) icon.className = 'fas fa-sun'; 
+                if(icon) icon.className = 'fas fa-sun';
             });
         }
     })();
