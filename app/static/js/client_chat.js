@@ -985,3 +985,62 @@ function toggleTranslation(messageDiv) {
         messageDiv.removeEventListener('animationend', handler); // Clean up!
     }, { once: true });
 }
+
+
+// ========================================
+// UTILITY FUNCTIONS (MISSING DEPENDENCIES)
+// ========================================
+
+/**
+ * Prevent XSS attacks by escaping HTML characters
+ */
+function escapeHtml(text) {
+    if (!text) return "";
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+/**
+ * Generate Avatar URL with fallback
+ */
+function getAvatarUrl(pic, name) {
+    if (pic && pic !== 'null' && pic !== 'None' && !pic.includes('placeholder')) {
+        return pic;
+    }
+    // Fallback to UI Avatars or Placehold.co
+    const initial = name ? name.charAt(0).toUpperCase() : 'U';
+    return `https://placehold.co/45/334155/white?text=${initial}`;
+}
+
+/**
+ * Update the sidebar when a new message arrives
+ * (Moves the contact to the top and updates last message preview)
+ */
+function updateSidebarForNewMessage(data) {
+    const otherUserId = (data.sender_id === verifiedUserId) ? data.receiver_id : data.sender_id;
+    const contactItem = document.querySelector(`.contact-item[data-user-id="${otherUserId}"]`);
+
+    if (contactItem) {
+        // 1. Update the last message text
+        const lastMsgDiv = contactItem.querySelector('.contact-last-msg');
+        if (lastMsgDiv) {
+            if (data.media_type === 'image') lastMsgDiv.textContent = '📷 Image';
+            else if (data.media_type === 'document') lastMsgDiv.textContent = '📄 Document';
+            else lastMsgDiv.textContent = data.content;
+
+            // Bold the text if it's unread
+            if (data.sender_id !== verifiedUserId) {
+                lastMsgDiv.style.fontWeight = "bold";
+                lastMsgDiv.style.color = "#333";
+            }
+        }
+
+        // 2. Move to top of list
+        const list = contactItem.parentElement;
+        list.prepend(contactItem);
+    }
+}
