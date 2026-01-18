@@ -11,6 +11,8 @@ const STATUS_REFRESH_INTERVAL_MS = 30000;    // 30 seconds
 const SEARCH_DEBOUNCE_MS = 300;              // 300ms
 const MAX_MESSAGE_LENGTH = 1000;             // Maximum message characters
 const MAX_FILE_SIZE = 5 * 1024 * 1024;       // 5MB
+let chatOffset = 0;                          // How many messages we have currently loaded
+const MESSAGES_PER_PAGE = 20;                // Batch size
 
 // -------------------- STATE VARIABLES --------------------
 let socket = null;
@@ -24,6 +26,8 @@ let lastTypingTime = 0;
 let currentChatLanguage = 'en';
 let verifiedUserId = null;
 let searchTimeout = null;
+let isLoadingHistory = false;
+let allHistoryLoaded = false;
 
 // ========================================
 // WEBSOCKET CONNECTION MANAGEMENT
@@ -512,42 +516,111 @@ function updateChatHeaderAvatar(pic, name) {
 }
 
 /**
- * Load chat history for a specific friend
+ * Load chat history with pagination
  * @param {number} friendId - Friend's user ID
+ * @param {boolean} isLoadMore - True if loading older messages on scroll
  */
-async function loadChatHistory(friendId) {
+async function loadChatHistory(friendId, isLoadMore = false) {
     const container = document.getElementById("messages");
 
-    // Show loading state
-    container.innerHTML = '<div style="text-align: center; padding: 40px; color: #999;"><i class="fas fa-spinner fa-spin"></i> Loading messages...</div>';
+    // 1. Reset state if this is a fresh chat open
+    if (!isLoadMore) {
+        chatOffset = 0;
+        allHistoryLoaded = false;
+        container.innerHTML = ''; // Clear previous chat
+        isLoadingHistory = false;
+
+        // Remove old scroll listener to prevent duplicates
+        container.onscroll = null;
+
+        // Attach new Scroll Listener
+        container.onscroll = () => {
+            if (container.scrollTop === 0 && !isLoadingHistory && !allHistoryLoaded) {
+                loadChatHistory(currentReceiverId, true);
+            }
+        };
+    }
+
+    // 2. Stop if already loading or no more messages
+    if (isLoadingHistory || (isLoadMore && allHistoryLoaded)) return;
+
+    isLoadingHistory = true;
+
+    // Show small loading spinner at top if loading more
+    let loadingDiv = null;
+    if (isLoadMore) {
+        loadingDiv = document.createElement('div');
+        loadingDiv.innerHTML = '<div style="text-align:center; padding:10px; font-size:12px; color:#888;">Loading older messages...</div>';
+        container.prepend(loadingDiv);
+    } else {
+        // Initial big loading state
+        container.innerHTML = '<div id="init-loader" style="text-align: center; padding: 40px; color: #999;"><i class="fas fa-spinner fa-spin"></i> Loading messages...</div>';
+    }
 
     try {
-        const response = await fetch(`/chat/history/${friendId}`);
+        // 3. Capture scroll height BEFORE adding new messages (to maintain position)
+        const oldScrollHeight = container.scrollHeight;
 
-        if (!response.ok) {
-            throw new Error(`Failed to load chat history: ${response.status}`);
-        }
+        // 4. Fetch with Pagination Params
+        // NOTE: Your backend must support ?limit=20&offset=0
+        const response = await fetch(`/chat/history/${friendId}?limit=${MESSAGES_PER_PAGE}&offset=${chatOffset}`);
+
+        if (!response.ok) throw new Error(`History fetch failed: ${response.status}`);
 
         const messages = await response.json();
 
-        // Clear loading state
-        container.innerHTML = "";
+        // Remove loading indicators
+        if (loadingDiv) loadingDiv.remove();
+        const initLoader = document.getElementById("init-loader");
+        if (initLoader) initLoader.remove();
 
-        // Display all messages
-        messages.forEach(msg => {
-            displayMessage(msg);
+        // 5. Handle "No More Messages"
+        if (messages.length < MESSAGES_PER_PAGE) {
+            allHistoryLoaded = true;
+            if (messages.length === 0 && isLoadMore) {
+                // Optional: Show "Start of conversation" text
+                const startDiv = document.createElement('div');
+                startDiv.innerHTML = '<div style="text-align:center; padding:15px; font-size:12px; color:#ccc;">Start of conversation</div>';
+                container.prepend(startDiv);
+            }
+        }
 
-            // Send read receipt for unread received messages
+        // 6. Display Messages
+        // API usually returns [oldest, ..., newest] or [newest, ..., oldest]
+        // Assuming API returns Chronological (Oldest -> Newest):
+        // We need to prepend them in reverse order so they appear correctly at the top
+        // Example: Batch is [Msg1, Msg2]. We prepend Msg2, then prepend Msg1. Result: Top [Msg1, Msg2] Bottom.
+
+        // If your API returns NEWEST first, remove the .reverse()
+        const messagesToRender = isLoadMore ? [...messages].reverse() : messages;
+
+        messagesToRender.forEach(msg => {
+            displayMessage(msg, isLoadMore); // Pass true to prepend if loading more
+
+            // Mark read receipts
             if (msg.receiver_id === verifiedUserId && msg.status !== 'read') {
                 sendReadReceipt(msg.id, msg.sender_id);
             }
         });
 
-        // Scroll to bottom
-        container.scrollTop = container.scrollHeight;
+        // 7. Update Offset
+        chatOffset += messages.length;
+
+        // 8. Handle Scroll Position
+        if (isLoadMore) {
+            // Restore scroll position: New Height - Old Height
+            // This keeps the user looking at the same message they were seeing before
+            container.scrollTop = container.scrollHeight - oldScrollHeight;
+        } else {
+            // Initial load: Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        }
+
     } catch (error) {
-        console.error("❌ Error loading chat history:", error);
-        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #f44;">Failed to load messages. Please try again.</div>';
+        console.error("❌ Error loading history:", error);
+        if (!isLoadMore) container.innerHTML = '<div style="text-align:center; color:#f44;">Failed to load messages.</div>';
+    } finally {
+        isLoadingHistory = false;
     }
 }
 
@@ -598,7 +671,12 @@ function sendMessage() {
  * Display a message in the chat container
  * @param {Object} data - Message data
  */
-function displayMessage(data) {
+/**
+ * Display a message in the chat container
+ * @param {Object} data - Message data
+ * @param {boolean} prepend - If true, adds message to the TOP (for history loading)
+ */
+function displayMessage(data, prepend = false) {
     const container = document.getElementById("messages");
 
     // Prevent duplicate messages
@@ -612,29 +690,35 @@ function displayMessage(data) {
     div.className = `message ${isMine ? 'sent' : 'received'}${data.is_translated ? ' translated' : ''}`;
     div.id = `msg-${data.id}`;
 
-    // Store translation data for toggle functionality
+    // Store translation data
     if (data.is_translated) {
         div.setAttribute('data-original', data.original_content || '');
         div.setAttribute('data-translated', data.content || '');
         div.setAttribute('data-is-showing-original', 'false');
         div.style.cursor = 'pointer';
-        div.onclick = function() {
-            toggleTranslation(this);
-        };
+        div.onclick = function() { toggleTranslation(this); };
     }
 
-    // Format timestamp
     const timestamp = new Date(data.timestamp);
     const timeStr = timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
-    // Create message content based on media type
     const contentHtml = createMessageContent(data);
     const ticksHtml = createMessageTicks(data, isMine, timeStr);
 
     div.innerHTML = `${contentHtml}${ticksHtml}`;
 
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
+    // --- LOGIC CHANGE HERE ---
+    if (prepend) {
+        // For loading old history: insert at the very top
+        container.prepend(div);
+    } else {
+        // For new incoming messages: insert at the bottom
+        container.appendChild(div);
+        // Only auto-scroll if we are already near the bottom
+        if (container.scrollHeight - container.scrollTop <= container.clientHeight + 100) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
 }
 
 /**
@@ -985,7 +1069,6 @@ function toggleTranslation(messageDiv) {
         messageDiv.removeEventListener('animationend', handler); // Clean up!
     }, { once: true });
 }
-
 
 // ========================================
 // UTILITY FUNCTIONS (MISSING DEPENDENCIES)
