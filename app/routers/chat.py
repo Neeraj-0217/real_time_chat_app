@@ -104,7 +104,13 @@ async def search_users(query: str, request: Request, db: Session = Depends(get_d
 # Chat History (with Translation)
 # -----------------------------
 @router.get("/chat/history/{friend_id}")
-async def get_chat_history(friend_id: int, request: Request, db: Session = Depends(get_db)):
+async def get_chat_history(
+        friend_id: int,
+        request: Request,
+        db: Session = Depends(get_db),
+        limit: int = 20,
+        offset: int = 0,
+):
     """
     Fetch full chat history with language translation applied per preference.
     """
@@ -127,9 +133,13 @@ async def get_chat_history(friend_id: int, request: Request, db: Session = Depen
                 and_(Message.sender_id == friend_id, Message.receiver_id == user.id),
             )
         )
-        .order_by(Message.timestamp.asc())
+        .order_by(Message.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
         .all()
     )
+
+    messages.reverse()
 
     response = []
     for msg in messages:
