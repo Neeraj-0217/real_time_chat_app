@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover">
     <title>Chat Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -712,14 +712,17 @@
         /* --- INPUT AREA --- */
         .input-area {
             padding: 20px 24px;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
             background: var(--chat-bg);
             display: none;
             gap: 12px;
             align-items: center;
             border-top: 1px solid var(--border-color);
             box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.03);
-            position: relative;
+            position: sticky;
             animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            bottom: 0;
+            z-index: 20;
         }
 
         @keyframes slideUp {
@@ -1417,5 +1420,31 @@
 
     <!-- External Chat Logic Script -->
     <script src="/static/js/client_chat.js"></script>
+
+    <script>
+        // 1. Save the original openChat function from client_chat.js
+        const originalOpenChat = window.openChat;
+
+        // 2. Overwrite openChat with a version that handles Mobile UI
+        window.openChat = async function(id, name, pic, isOnline) {
+
+            // Step A: Run the original logic (Fetch messages, set variables)
+            if (typeof originalOpenChat === 'function') {
+                await originalOpenChat(id, name, pic, isOnline);
+            }
+
+            // Step B: Trigger the Mobile UI Animation
+            // This ensures that whether it's called from Search or Contact List,
+            // the screen always slides on mobile.
+            if (window.innerWidth <= 768) {
+                document.body.classList.add('chat-active');
+
+                const chatArea = document.querySelector('.chat-area');
+                if (chatArea) {
+                    chatArea.style.display = 'flex';
+                }
+            }
+        };
+    </script>
 </body>
 </html>
